@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "deploy": "npm run build && git add . && git commit -m \"message\" && git push"
+    "deploy": "npm run build && git add . && git commit -m \"message\" && git push pile-app main"
   },
   "dependencies": {
     "react": "^19.2.5",
