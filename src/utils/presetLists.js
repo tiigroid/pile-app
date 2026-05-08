@@ -28,15 +28,25 @@ export async function initializePresetLists(db) {
 
 			for (const title of PRESET_LIST_NAMES) {
 				if (!existingTitles.includes(title)) {
-					await addOrUpdate(db, 'entities', {
-						id: `preset-${title.toLowerCase()}-${Date.now()}`,
-						type: 'list',
-						title,
-						preset: true,
-						items: [],
-						color: DEFAULT_COLOR,
-						lastChanged: new Date().toISOString()
-					})
+					// Use consistent id based on title
+					const consistentId = `preset-${title.toLowerCase()}`
+					
+					// Double-check that this preset doesn't already exist
+					const existing = entities.find(
+						(e) => e.type === 'list' && e.preset && e.title === title
+					)
+					
+					if (!existing) {
+						await addOrUpdate(db, 'entities', {
+							id: consistentId,
+							type: 'list',
+							title,
+							preset: true,
+							items: [],
+							color: DEFAULT_COLOR,
+							lastChanged: new Date().toISOString()
+						})
+					}
 				}
 			}
 		}

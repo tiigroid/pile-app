@@ -11,6 +11,8 @@ body,
 
 body {
   background: #000;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .app {
@@ -125,7 +127,7 @@ body {
 	padding: 0.5rem 0.75rem;
 	color: var(--color-text-primary);
 	font-family: inherit;
-	font-size: 0.95rem;
+	font-size: 16px;
 }
 
 .input::placeholder {
@@ -316,6 +318,7 @@ body {
 	border: 1px solid var(--color-border);
   box-sizing: border-box;
 	padding: 0 var(--spacing-sm);
+	user-select: none;
 }
 
 /* Remove left border from left-side items */
@@ -386,6 +389,7 @@ body {
 	position: relative;
 	cursor: pointer;
 	-webkit-tap-highlight-color: transparent;
+	user-select: none;
 }
 
 .entity-item__avatar {
@@ -540,12 +544,14 @@ body {
 	background: transparent;
 	border: none;
 	color: var(--color-text-primary);
-	font-size: 1.1rem;
+	font-size: 16px;
 	font-weight: 600;
 	padding: 0;
 	outline: none;
 	font-family: inherit;
 	text-align: left;
+	user-select: text;
+	-webkit-user-select: text;
 }
 
 .fullscreen-view__content {
@@ -561,10 +567,12 @@ body {
 	border: none;
 	color: var(--color-text-primary);
 	font-family: inherit;
-	font-size: 14px;
+	font-size: 16px;
 	line-height: 1.6;
 	outline: none;
 	resize: none;
+	user-select: text;
+	-webkit-user-select: text;
 }
 
 .list-items-view {
@@ -626,4 +634,5 @@ body {
 	border-radius: 50%;
 	cursor: pointer;
 	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+	user-select: none;
 }
