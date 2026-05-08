@@ -1,0 +1,44 @@
+/* ============================================
+ * BEM Naming Convention
+ * ============================================
+ * Block: .block
+ * Element: .block__element
+ * Modifier: .block--modifier or .block__element--modifier
+ * 
+ * Example:
+ * .card__title--large
+ * .button--primary--disabled
+ */
+
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+body {
+	font-family: system-ui, -apple-system, sans-serif;
+	line-height: 1.6;
+	color: #FFFFFF;
+	background: #111111;
+}
+
+#root {
+	min-height: 100vh;
+}
+
+/* Color Variables */
+:root {
+	--color-bg: #000000;
+	--color-text-primary: #FFFFFF;
+	--color-text-secondary: rgba(255, 255, 255, 0.7);
+	--color-accent: #0096b1;
+	--color-warning: #6b1e2f;
+	--color-border: #2a2a2a;
+	--color-modal-bg: #1a1a1a;
+	--radius: 4px;
+	--spacing-xs: 0.5rem;
+	--spacing-sm: 8px;
+	--spacing-md: 1.5rem;
+	--spacing-lg: 2rem;
+}
