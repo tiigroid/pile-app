@@ -28,9 +28,11 @@ const DEFAULT_COLOR = 'oklch(55.4% 0.046 257.417)'
 function App() {
 	const dbRef = useRef(null)
 	const colorPickerRef = useRef(null)
+	const entityViewTextareaRef = useRef(null)
 	const [presetLists, setPresetLists] = useState([])
 	const [view, setView] = useState('main') // 'main', 'note-create', 'list-create'
 	const [titleInput, setTitleInput] = useState('')
+	const [bodyInput, setBodyInput] = useState('')
 	const [entities, setEntities] = useState([])
 	const [showColorPicker, setShowColorPicker] = useState(false)
 	const [selectedEntityId, setSelectedEntityId] = useState(null)
@@ -44,8 +46,18 @@ function App() {
 	const ghostPositionRef = useRef({ x: 0, y: 0 })
 	const [ghostTrigger, setGhostTrigger] = useState(0) // Lightweight trigger for re-renders
 	const debounceTimerRef = useRef(null)
+	const dragDelayTimerRef = useRef(null) // Timer for long press
+	const isLongPressRef = useRef(false) // Whether we've completed the long press
+	const longPressStartRef = useRef(null) // Start position for tracking movement
+	const longPressEntityIdRef = useRef(null) // Entity ID for the long press
 	const touchStartX = useRef(0)
 	const touchEndX = useRef(0)
+	const [viewingEntityId, setViewingEntityId] = useState(null) // Entity being viewed/edited
+	const [editingEntity, setEditingEntity] = useState(null) // Local copy for editing
+	const autoSaveTimerRef = useRef(null) // Debounce timer for autosave
+	const noteCreatedRef = useRef(false) // Track if note was already created during note-create session
+	const createdNoteIdRef = useRef(null) // Track the ID of the created note during note-create session
+	const createNoteAutoSaveTimerRef = useRef(null) // Auto-save timer for note creation view
 
 	// Get non-preset entities sorted by order
 	const getMainEntities = () => {
@@ -64,6 +76,19 @@ function App() {
 			console.error('Failed to load entities:', err)
 		}
 	}
+
+	// Focus textarea and set cursor to end when opening entity view
+	useEffect(() => {
+		if (view === 'entity-view' && editingEntity?.type === 'note' && entityViewTextareaRef.current) {
+			setTimeout(() => {
+				if (entityViewTextareaRef.current) {
+					entityViewTextareaRef.current.focus()
+					const length = entityViewTextareaRef.current.value.length
+					entityViewTextareaRef.current.setSelectionRange(length, length)
+				}
+			}, 0)
+		}
+	}, [view, editingEntity])
 
 	// Close color picker on blur (click outside)
 	useEffect(() => {
@@ -117,7 +142,10 @@ function App() {
 
 	const handleCreateNote = () => {
 		setTitleInput('')
+		setBodyInput('')
 		setTempColor(null)
+		noteCreatedRef.current = false
+		createdNoteIdRef.current = null
 		setView('note-create')
 	}
 
@@ -130,6 +158,9 @@ function App() {
 	const handleBack = () => {
 		setView('main')
 		setTitleInput('')
+		setBodyInput('')
+		noteCreatedRef.current = false
+		createdNoteIdRef.current = null
 		setShowColorPicker(false)
 	}
 
@@ -142,25 +173,117 @@ function App() {
 		handleSwipe()
 	}
 
+	const incrementExistingOrders = async (db) => {
+		// Increment all non-preset entity orders by 1 to push them down
+		const nonPresets = entities.filter(e => !e.preset)
+		for (const entity of nonPresets) {
+			const updated = { ...entity, order: (entity.order || 0) + 1 }
+			await addOrUpdate(db, 'entities', updated)
+		}
+	}
+
+	const handleAutoCreateNote = async (title, body) => {
+		// Only create once per session
+		if (noteCreatedRef.current || !dbRef.current) return
+
+		try {
+			noteCreatedRef.current = true
+			// Increment existing orders first
+			await incrementExistingOrders(dbRef.current)
+			const noteId = `note-${Date.now()}`
+			createdNoteIdRef.current = noteId
+			const finalTitle = (title || '').trim() || 'Untitled'
+			await addOrUpdate(dbRef.current, 'entities', {
+				id: noteId,
+				type: 'note',
+				title: finalTitle,
+				content: body || '',
+				color: tempColor || DEFAULT_COLOR,
+				order: 1,
+				lastChanged: new Date().toISOString()
+			})
+			await loadAllEntities(dbRef.current)
+		} catch (err) {
+			console.error('Failed to auto-create note:', err)
+		}
+	}
+
+	const handleNoteCreateAutoSave = async (newTitle, newBody) => {
+		// Auto-save changes to the created note
+		if (!noteCreatedRef.current || !createdNoteIdRef.current || !dbRef.current) return
+
+		// Clear existing timer
+		if (createNoteAutoSaveTimerRef.current) {
+			clearTimeout(createNoteAutoSaveTimerRef.current)
+		}
+
+		// Set new timer for debounced save
+		createNoteAutoSaveTimerRef.current = setTimeout(async () => {
+			try {
+				// Get the existing note first to preserve all fields
+				const existingNote = entities.find(e => e.id === createdNoteIdRef.current)
+				if (!existingNote) return
+
+				const finalTitle = (newTitle || '').trim() || 'Untitled'
+				await addOrUpdate(dbRef.current, 'entities', {
+					...existingNote,
+					title: finalTitle,
+					content: newBody || ''
+				})
+				await loadAllEntities(dbRef.current)
+			} catch (err) {
+				console.error('Failed to auto-save note:', err)
+			}
+		}, 300)
+	}
+
+	const handleTitleInputChange = (e) => {
+		const newValue = e.target.value
+		setTitleInput(newValue)
+		// Auto-create on first character
+		if (newValue.length === 1 && !noteCreatedRef.current) {
+			handleAutoCreateNote(newValue, bodyInput)
+		} else if (noteCreatedRef.current) {
+			// Auto-save subsequent changes
+			handleNoteCreateAutoSave(newValue, bodyInput)
+		}
+	}
+
+	const handleBodyInputChange = (e) => {
+		const newValue = e.target.value
+		setBodyInput(newValue)
+		// Auto-create on first character
+		if (newValue.length === 1 && !noteCreatedRef.current) {
+			handleAutoCreateNote(titleInput, newValue)
+		} else if (noteCreatedRef.current) {
+			// Auto-save subsequent changes
+			handleNoteCreateAutoSave(titleInput, newValue)
+		}
+	}
+
 	const handleSwipe = () => {
 		const swipeThreshold = 50 // minimum pixels to consider as swipe
 		const diff = touchEndX.current - touchStartX.current
 
 		// Swipe left to right (positive difference)
 		if (diff > swipeThreshold) {
-			// If title is empty, just go back without saving
-			if (!titleInput.trim()) {
-				setView('main')
-				setTitleInput('')
-				setShowColorPicker(false)
-				return
-			}
-
-			// If title exists, save it
 			if (view === 'note-create') {
-				handleSaveNoteAndReturn()
+				// Just go back, note is already auto-created if there's content
+				handleBack()
 			} else if (view === 'list-create') {
+				// If title is empty, just go back without saving
+				if (!titleInput.trim()) {
+					setView('main')
+					setTitleInput('')
+					setShowColorPicker(false)
+					return
+				}
+
+				// If title exists, save it
 				handleSaveListAndReturn()
+			} else if (view === 'entity-view') {
+				// Close entity view on swipe back
+				handleBackFromEntityView()
 			}
 		}
 	}
@@ -177,10 +300,18 @@ function App() {
 			const entity = entities.find((e) => e.id === selectedEntityId)
 			if (!entity) return
 
-			await addOrUpdate(dbRef.current, 'entities', {
+			const updatedEntity = {
 				...entity,
 				color: colorHex
-			})
+			}
+			
+			await addOrUpdate(dbRef.current, 'entities', updatedEntity)
+			
+			// If editing entity, update editing state too
+			if (view === 'entity-view' && editingEntity?.id === selectedEntityId) {
+				setEditingEntity({ ...editingEntity, color: colorHex })
+			}
+			
 			await loadAllEntities(dbRef.current)
 			setShowColorPicker(false)
 			setSelectedEntityId(null)
@@ -211,15 +342,18 @@ function App() {
 	}
 
 	const handleSaveNoteAndReturn = async () => {
-		if (!titleInput.trim() || !dbRef.current) return
+		// Only save if there's meaningful content (title or body)
+		if (!titleInput.trim() && !bodyInput.trim()) return
+		if (!dbRef.current) return
 
 		try {
 			const maxOrder = Math.max(...entities.filter(e => !e.preset).map(e => e.order || 0), 0)
+			const finalTitle = titleInput.trim() || 'Untitled'
 			await addOrUpdate(dbRef.current, 'entities', {
 				id: `note-${Date.now()}`,
 				type: 'note',
-				title: titleInput,
-				body: '',
+				title: finalTitle,
+				content: bodyInput,
 				color: tempColor || DEFAULT_COLOR,
 				order: maxOrder + 1,
 				lastChanged: new Date().toISOString()
@@ -227,6 +361,7 @@ function App() {
 			await loadAllEntities(dbRef.current)
 			setView('main')
 			setTitleInput('')
+			setBodyInput('')
 			setTempColor(null)
 			setShowColorPicker(false)
 		} catch (err) {
@@ -238,7 +373,8 @@ function App() {
 		if (!titleInput.trim() || !dbRef.current) return
 
 		try {
-			const maxOrder = Math.max(...entities.filter(e => !e.preset).map(e => e.order || 0), 0)
+			// Increment existing orders first
+			await incrementExistingOrders(dbRef.current)
 			await addOrUpdate(dbRef.current, 'entities', {
 				id: `list-${Date.now()}`,
 				type: 'list',
@@ -246,7 +382,7 @@ function App() {
 				preset: false,
 				items: [],
 				color: tempColor || DEFAULT_COLOR,
-				order: maxOrder + 1,
+				order: 1,
 				lastChanged: new Date().toISOString()
 			})
 			await loadAllEntities(dbRef.current)
@@ -259,111 +395,37 @@ function App() {
 		}
 	}
 
-	// Drag and drop handlers (mouse)
-	const handleDragStart = (e, entityId) => {
-		setDraggedEntityId(entityId)
-		dragStartYRef.current = e.clientY
-		ghostPositionRef.current = { x: e.clientX, y: e.clientY }
-		setGhostTrigger(t => t + 1)
-		e.dataTransfer.effectAllowed = 'move'
-	}
-
-	const handleDragOver = (e) => {
-		e.preventDefault()
-		e.dataTransfer.dropEffect = 'move'
-		
-		if (!draggedEntityId) return
-		
-		ghostPositionRef.current = { x: e.clientX, y: e.clientY }
-		
-		// Find which item is under the cursor
-		const targetElement = document.elementFromPoint(e.clientX, e.clientY)
-		const itemDiv = targetElement?.closest('[data-entity-id]')
-		const targetEntityId = itemDiv?.dataset?.entityId
-		
-		// Update hover index for empty placeholder
-		if (itemDiv) {
-			const hoveredIdx = itemsOrder.findIndex(e => e.id === targetEntityId)
-			setHoverIndex(hoveredIdx)
-		}
-		
-		if (!targetEntityId || targetEntityId === draggedEntityId) {
-			setGhostTrigger(t => t + 1)
-			return
-		}
-		
-		// Calculate if we've crossed 50% of the target
-		const itemRect = itemDiv.getBoundingClientRect()
-		const itemCenter = itemRect.top + itemRect.height / 2
-		const distanceFromCenter = e.clientY - itemCenter
-		
-		// If cursor is past 50% of the item height, swap in local state
-		if (Math.abs(distanceFromCenter) > itemRect.height / 4) {
-			const draggedIdx = itemsOrder.findIndex(e => e.id === draggedEntityId)
-			const targetIdx = itemsOrder.findIndex(e => e.id === targetEntityId)
-			
-			if (draggedIdx !== -1 && targetIdx !== -1 && draggedIdx !== targetIdx) {
-				const newOrder = [...itemsOrder]
-				const temp = newOrder[draggedIdx]
-				newOrder[draggedIdx] = newOrder[targetIdx]
-				newOrder[targetIdx] = temp
-				setItemsOrder(newOrder)
-			}
-		}
-		
-		setGhostTrigger(t => t + 1)
-	}
-
-	const handleDrop = async (e) => {
-		e.preventDefault()
-		
-		if (!draggedEntityId) {
-			setDraggedEntityId(null)
-			setItemsOrder([])
-			setHoverIndex(-1)
-			return
-		}
-
-		try {
-			// Use itemsOrder state which has the correct positions
-			const updatedEntities = itemsOrder.map((entity, idx) => ({
-				...entity,
-				order: idx
-			}))
-			
-			// Save all to DB
-			for (const entity of updatedEntities) {
-				await addOrUpdate(dbRef.current, 'entities', entity)
-			}
-			
-			// Update full entities list with new orders
-			const allEntities = await getAllRecords(dbRef.current, 'entities')
-			setEntities(allEntities)
-			setItemsOrder(updatedEntities)
-			setDraggedEntityId(null)
-		} catch (err) {
-			console.error('Failed to save reorder:', err)
-			setDraggedEntityId(null)
-		}
-	}
-
-	const handleDragEnd = () => {
-		setDraggedEntityId(null)
-		setItemsOrder([])
-		setHoverIndex(-1)
-	}
-
-	// Touch handlers for mobile drag-and-drop
+	// Touch handlers for mobile drag-and-drop (mobile-only)
 	const handleEntityTouchStart = (e, entityId) => {
-		setDraggedEntityId(entityId)
+		// Reset long press state
+		isLongPressRef.current = false
+		longPressEntityIdRef.current = entityId
 		const touch = e.touches[0]
-		dragStartYRef.current = touch.clientY
-		ghostPositionRef.current = { x: touch.clientX, y: touch.clientY }
-		setGhostTrigger(t => t + 1)
+		longPressStartRef.current = { x: touch.clientX, y: touch.clientY }
+
+		// Start timer for long press (300ms)
+		dragDelayTimerRef.current = setTimeout(() => {
+			isLongPressRef.current = true
+			setDraggedEntityId(entityId)
+			// Initialize hover index to original position to show empty placeholder there
+			const draggedIdx = itemsOrder.length > 0 ? itemsOrder.findIndex(e => e.id === entityId) : entities.findIndex(e => e.id === entityId)
+			setHoverIndex(draggedIdx)
+			dragStartYRef.current = touch.clientY
+			ghostPositionRef.current = { x: touch.clientX, y: touch.clientY }
+			setGhostTrigger(t => t + 1)
+		}, 300)
 	}
 
 	const handleEntityTouchMove = (e) => {
-		if (!draggedEntityId) return
+		// If we haven't completed the long press, cancel it on movement
+		if (!isLongPressRef.current && dragDelayTimerRef.current) {
+			clearTimeout(dragDelayTimerRef.current)
+			dragDelayTimerRef.current = null
+			return
+		}
+
+		// If long press is complete, use isLongPressRef instead of draggedEntityId (which may not be set yet due to async state)
+		if (!isLongPressRef.current) return
 		
 		const touch = e.touches[0]
 		ghostPositionRef.current = { x: touch.clientX, y: touch.clientY }
@@ -373,25 +435,29 @@ function App() {
 		const itemDiv = targetElement?.closest('[data-entity-id]')
 		const targetEntityId = itemDiv?.dataset?.entityId
 		
-		if (!targetEntityId || targetEntityId === draggedEntityId) {
-			setGhostTrigger(t => t + 1)
-			return
+		// Update hover index for empty placeholder
+		if (itemDiv) {
+			const hoveredIdx = itemsOrder.findIndex(e => e.id === targetEntityId)
+			setHoverIndex(hoveredIdx)
 		}
 		
-		// Check if crossed 50% of target
-		const itemRect = itemDiv.getBoundingClientRect()
-		const distanceFromCenter = touch.clientY - (itemRect.top + itemRect.height / 2)
-		
-		if (Math.abs(distanceFromCenter) > itemRect.height / 4) {
-			const draggedIdx = itemsOrder.findIndex(e => e.id === draggedEntityId)
-			const targetIdx = itemsOrder.findIndex(e => e.id === targetEntityId)
+		// If we have a draggedEntityId now, process the reordering
+		if (draggedEntityId && targetEntityId && targetEntityId !== draggedEntityId) {
+			// Check if crossed 50% of target
+			const itemRect = itemDiv.getBoundingClientRect()
+			const distanceFromCenter = touch.clientY - (itemRect.top + itemRect.height / 2)
 			
-			if (draggedIdx !== -1 && targetIdx !== -1 && draggedIdx !== targetIdx) {
-				const newOrder = [...itemsOrder]
-				const temp = newOrder[draggedIdx]
-				newOrder[draggedIdx] = newOrder[targetIdx]
-				newOrder[targetIdx] = temp
-				setItemsOrder(newOrder)
+			if (Math.abs(distanceFromCenter) > itemRect.height / 4) {
+				const draggedIdx = itemsOrder.findIndex(e => e.id === draggedEntityId)
+				const targetIdx = itemsOrder.findIndex(e => e.id === targetEntityId)
+				
+				if (draggedIdx !== -1 && targetIdx !== -1 && draggedIdx !== targetIdx) {
+					const newOrder = [...itemsOrder]
+					const temp = newOrder[draggedIdx]
+					newOrder[draggedIdx] = newOrder[targetIdx]
+					newOrder[targetIdx] = temp
+					setItemsOrder(newOrder)
+				}
 			}
 		}
 		
@@ -399,6 +465,14 @@ function App() {
 	}
 
 	const handleEntityTouchEnd = async (e) => {
+		// Clear timer if still running
+		if (dragDelayTimerRef.current) {
+			clearTimeout(dragDelayTimerRef.current)
+			dragDelayTimerRef.current = null
+		}
+		isLongPressRef.current = false
+		longPressEntityIdRef.current = null
+
 		if (!draggedEntityId) {
 			setDraggedEntityId(null)
 			setItemsOrder([])
@@ -427,7 +501,54 @@ function App() {
 			setDraggedEntityId(null)
 		}
 	}
-//test
+
+	// Open entity in fullscreen editing view
+	const handleOpenEntity = (entity) => {
+		setViewingEntityId(entity.id)
+		setEditingEntity({ ...entity })
+		setView('entity-view')
+	}
+
+	// Autosave edited entity with debounce
+	const handleAutoSave = async (updatedEntity) => {
+		// Clear existing timer
+		if (autoSaveTimerRef.current) {
+			clearTimeout(autoSaveTimerRef.current)
+		}
+
+		// Set new timer for autosave (300ms debounce)
+		autoSaveTimerRef.current = setTimeout(async () => {
+			try {
+				await addOrUpdate(dbRef.current, 'entities', updatedEntity)
+				// Update local entities list
+				const allEntities = await getAllRecords(dbRef.current, 'entities')
+				setEntities(allEntities)
+			} catch (err) {
+				console.error('Failed to autosave entity:', err)
+			}
+		}, 300)
+	}
+
+	// Handle entity field changes with autosave
+	const handleEntityFieldChange = (field, value) => {
+		const updated = { ...editingEntity, [field]: value }
+		setEditingEntity(updated)
+		handleAutoSave(updated)
+	}
+
+	// Close entity view and return to main
+	const handleBackFromEntityView = () => {
+		setViewingEntityId(null)
+		setEditingEntity(null)
+		setView('main')
+		setShowColorPicker(false)
+		// Clear any pending autosave
+		if (autoSaveTimerRef.current) {
+			clearTimeout(autoSaveTimerRef.current)
+		}
+	}
+
+	//test
 	return (
 		<div className="app">
 			{view === 'main' && (
@@ -451,19 +572,18 @@ function App() {
 								<div 
 									data-entity-id={entity.id}
 									className={`entity-item ${draggedEntityId === entity.id ? 'entity-item--hidden' : ''}`}
-									draggable
-									onDragStart={(e) => handleDragStart(e, entity.id)}
-									onDragOver={(e) => handleDragOver(e)}
-									onDrop={(e) => handleDrop(e)}
-									onDragEnd={handleDragEnd}
 									onTouchStart={(e) => handleEntityTouchStart(e, entity.id)}
 									onTouchMove={(e) => handleEntityTouchMove(e)}
 									onTouchEnd={(e) => handleEntityTouchEnd(e)}
+									onClick={() => !draggedEntityId && handleOpenEntity(entity)}
 									>
 									<div 
 										className="entity-item__avatar"
 										style={{ background: entity.color }}
-										onClick={(e) => openColorPicker(entity.id, false, e)}
+										onClick={(e) => {
+											e.stopPropagation()
+											openColorPicker(entity.id, false, e)
+										}}
 									>
 										{entity.type === 'note' ? (
 											<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M240 432L64 432c-8.8 0-16-7.2-16-16L48 96c0-8.8 7.2-16 16-16l320 0c8.8 0 16 7.2 16 16l0 176-88 0c-39.8 0-72 32.2-72 72l0 88zM380.1 320L288 412.1 288 344c0-13.3 10.7-24 24-24l68.1 0zM0 416c0 35.3 28.7 64 64 64l197.5 0c17 0 33.3-6.7 45.3-18.7L429.3 338.7c12-12 18.7-28.3 18.7-45.3L448 96c0-35.3-28.7-64-64-64L64 32C28.7 32 0 60.7 0 96L0 416z"/></svg>
@@ -544,7 +664,7 @@ function App() {
 						{/* Preset Lists Grid */}
 						<div className="preset-grid">
 							{presetLists.map((list) => (
-								<div key={list?.id} className="preset-grid__cell">
+								<div key={list?.id} className="preset-grid__cell" onClick={() => list && handleOpenEntity(list)}>
 								<div className="preset-grid__avatar" style={{ background: list?.color }}>
 									<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="M133.8 36.3c10.9 7.6 13.5 22.6 5.9 33.4l-56 80c-4.1 5.8-10.5 9.5-17.6 10.1S52 158 47 153L7 113C-2.3 103.6-2.3 88.4 7 79S31.6 69.7 41 79l19.8 19.8 39.6-56.6c7.6-10.9 22.6-13.5 33.4-5.9zm0 160c10.9 7.6 13.5 22.6 5.9 33.4l-56 80c-4.1 5.8-10.5 9.5-17.6 10.1S52 318 47 313L7 273c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0l19.8 19.8 39.6-56.6c7.6-10.9 22.6-13.5 33.4-5.9zM224 96c0-17.7 14.3-32 32-32l224 0c17.7 0 32 14.3 32 32s-14.3 32-32 32l-224 0c-17.7 0-32-14.3-32-32zm0 160c0-17.7 14.3-32 32-32l224 0c17.7 0 32 14.3 32 32s-14.3 32-32 32l-224 0c-17.7 0-32-14.3-32-32zM160 416c0-17.7 14.3-32 32-32l288 0c17.7 0 32 14.3 32 32s-14.3 32-32 32l-288 0c-17.7 0-32-14.3-32-32zM64 376a40 40 0 1 1 0 80 40 40 0 1 1 0-80z"/></svg>
 								</div>
@@ -581,14 +701,105 @@ function App() {
 					type="text"
 					className="fullscreen-view__input"
 					placeholder="Note title"
-					value={titleInput}					onChange={(e) => setTitleInput(e.target.value)}
+					value={titleInput}
+					onChange={handleTitleInputChange}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter' && titleInput.trim()) {
+							e.preventDefault()
+							document.querySelector('.note-create-textarea')?.focus()
+						}
+					}}
 					autoFocus
 				/>
 			</div>
-			<div className="fullscreen-view__content"></div>
+			<div className="fullscreen-view__content">
+				<textarea
+					className="note-create-textarea fullscreen-view__textarea"
+					value={bodyInput}
+					onChange={handleBodyInputChange}
+				/>
+			</div>
 		</div>
 	)}
-			{view === 'list-create' && (
+
+		{view === 'entity-view' && editingEntity && (
+			<div 
+				className="fullscreen-view"
+				onTouchStart={handleTouchStart}
+				onTouchEnd={handleTouchEnd}
+			>
+				<div className="fullscreen-view__header">
+					<div 
+						className="fullscreen-view__avatar"
+						style={{ background: editingEntity.color }}
+						onClick={(e) => {
+							if (editingEntity.preset) return
+							setSelectedEntityId(editingEntity.id)
+							setPickerViewMode('fullscreen')
+							openColorPicker(editingEntity.id, false, e)
+						}}
+					>
+						{editingEntity.type === 'note' ? (
+							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M240 432L64 432c-8.8 0-16-7.2-16-16L48 96c0-8.8 7.2-16 16-16l320 0c8.8 0 16 7.2 16 16l0 176-88 0c-39.8 0-72 32.2-72 72l0 88zM380.1 320L288 412.1 288 344c0-13.3 10.7-24 24-24l68.1 0zM0 416c0 35.3 28.7 64 64 64l197.5 0c17 0 33.3-6.7 45.3-18.7L429.3 338.7c12-12 18.7-28.3 18.7-45.3L448 96c0-35.3-28.7-64-64-64L64 32C28.7 32 0 60.7 0 96L0 416z"/></svg>
+						) : (
+							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="M133.8 36.3c10.9 7.6 13.5 22.6 5.9 33.4l-56 80c-4.1 5.8-10.5 9.5-17.6 10.1S52 158 47 153L7 113C-2.3 103.6-2.3 88.4 7 79S31.6 69.7 41 79l19.8 19.8 39.6-56.6c7.6-10.9 22.6-13.5 33.4-5.9zm0 160c10.9 7.6 13.5 22.6 5.9 33.4l-56 80c-4.1 5.8-10.5 9.5-17.6 10.1S52 318 47 313L7 273c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0l19.8 19.8 39.6-56.6c7.6-10.9 22.6-13.5 33.4-5.9zM224 96c0-17.7 14.3-32 32-32l224 0c17.7 0 32 14.3 32 32s-14.3 32-32 32l-224 0c-17.7 0-32-14.3-32-32zm0 160c0-17.7 14.3-32 32-32l224 0c17.7 0 32 14.3 32 32s-14.3 32-32 32l-224 0c-17.7 0-32-14.3-32-32zM160 416c0-17.7 14.3-32 32-32l288 0c17.7 0 32 14.3 32 32s-14.3 32-32 32l-288 0c-17.7 0-32-14.3-32-32zM64 376a40 40 0 1 1 0 80 40 40 0 1 1 0-80z"/></svg>
+						)}
+					</div>
+					<input
+						type="text"
+						className="fullscreen-view__input"
+						placeholder={editingEntity.type === 'note' ? 'Note title' : 'List title'}
+						value={editingEntity.title}
+					onChange={(e) => handleEntityFieldChange('title', e.target.value)}
+					disabled={editingEntity.preset}
+				/>
+				</div>
+				<div className="fullscreen-view__content">
+					{editingEntity.type === 'note' && (
+						<textarea
+							ref={entityViewTextareaRef}
+							className="fullscreen-view__textarea"
+
+							value={editingEntity.content || ''}
+							onChange={(e) => handleEntityFieldChange('content', e.target.value)}
+							autoFocus
+						/>
+					)}
+					{editingEntity.type === 'list' && (
+						<div className="list-items-view">
+							{editingEntity.items?.map((item, idx) => (
+								<div key={idx} className="list-item-edit">
+									<input
+										type="text"
+										value={item}
+										onChange={(e) => {
+											const newItems = [...editingEntity.items]
+											newItems[idx] = e.target.value
+											handleEntityFieldChange('items', newItems)
+										}}
+										placeholder="Item"
+									/>
+								</div>
+							))}
+							<input
+								type="text"
+								className="list-item-add"
+								placeholder="Add item"
+								onKeyDown={(e) => {
+									if (e.key === 'Enter' && e.target.value.trim()) {
+										const newItems = [...(editingEntity.items || []), e.target.value]
+										handleEntityFieldChange('items', newItems)
+										e.target.value = ''
+									}
+								}}
+							/>
+						</div>
+					)}
+				</div>
+			</div>
+		)}
+
+		{view === 'list-create' && (
 				<div 
 					className="fullscreen-view"
 					onTouchStart={handleTouchStart}
