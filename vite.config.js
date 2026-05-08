@@ -11,7 +11,7 @@ export default defineConfig({
       manifest: {
         name: 'My App',
         short_name: 'MyApp',
-        start_url: '/my-project/',
+        start_url: '/pile-app/',
         display: 'standalone',
         background_color: '#000000',
         theme_color: '#000000',
