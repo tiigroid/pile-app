@@ -639,3 +639,59 @@ body {
 	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 	user-select: none;
 }
+
+/* ========================================== */
+/* Shake Mode */
+/* ========================================== */
+.shake-mode-container {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 85vh;
+	background: #000;
+	z-index: 5000;
+	overflow: hidden;
+}
+
+.shake-circle {
+	position: absolute;
+	width: 60px;
+	height: 60px;
+	border-radius: 50%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--color-text-primary);
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+	word-break: break-word;
+	text-align: center;
+	padding: 8px;
+	line-height: 1.2;
+}
+
+.shake-circle__text {
+	pointer-events: none;
+	user-select: none;
+}
+
+.shake-mode-exit {
+	position: absolute;
+	top: 16px;
+	right: 16px;
+	width: 44px;
+	height: 44px;
+	border-radius: 50%;
+	background: rgba(255, 255, 255, 0.1);
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	color: var(--color-text-primary);
+	font-size: 24px;
+	cursor: pointer;
+	z-index: 5001;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	-webkit-tap-highlight-color: transparent;
+}

@@ -58,6 +58,10 @@ function App() {
 	const noteCreatedRef = useRef(false) // Track if note was already created during note-create session
 	const createdNoteIdRef = useRef(null) // Track the ID of the created note during note-create session
 	const createNoteAutoSaveTimerRef = useRef(null) // Auto-save timer for note creation view
+	const [isShakeMode, setIsShakeMode] = useState(false) // Shake mode active
+	const [circleEntities, setCircleEntities] = useState([]) // Circles with physics state
+	const animationFrameRef = useRef(null) // RAF for physics loop
+	const lastAccelRef = useRef({ x: 0, y: 0, z: 0 }) // Last acceleration for shake detection
 
 	// Get non-preset entities sorted by order
 	const getMainEntities = () => {
@@ -139,6 +143,161 @@ function App() {
 			}
 		}
 	}, [])
+
+	// Shake detection and physics simulation
+	useEffect(() => {
+		const handleDeviceMotion = (e) => {
+			const { x, y, z } = e.acceleration || {}
+			if (!x || !y || !z) return
+
+			// Calculate change in acceleration
+			const deltaX = Math.abs(x - lastAccelRef.current.x)
+			const deltaY = Math.abs(y - lastAccelRef.current.y)
+			const deltaZ = Math.abs(z - lastAccelRef.current.z)
+			
+			lastAccelRef.current = { x, y, z }
+
+			// Shake threshold (combined acceleration change)
+			const shakeThreshold = 50
+			const totalDelta = deltaX + deltaY + deltaZ
+
+			if (totalDelta > shakeThreshold && view === 'main' && !isShakeMode) {
+				// Trigger shake mode
+				const mainEntities = getMainEntities()
+				const circles = mainEntities.map((entity, idx) => {
+					const contentDiv = document.querySelector(`[data-entity-id="${entity.id}"]`)
+					const rect = contentDiv?.getBoundingClientRect()
+					return {
+						id: entity.id,
+						title: entity.title,
+						color: entity.color,
+						x: rect?.left + rect?.width / 2 || 50 + idx * 10,
+						y: rect?.top + rect?.height / 2 || 50 + idx * 10,
+						vx: (Math.random() - 0.5) * 5,
+						vy: (Math.random() - 0.5) * 5,
+						rotation: Math.random() * 40 - 20, // Initial rotation
+						angularVelocity: (Math.random() - 0.5) * 10,
+					}
+				})
+				setCircleEntities(circles)
+				setIsShakeMode(true)
+			}
+		}
+
+		window.addEventListener('devicemotion', handleDeviceMotion, true)
+		return () => window.removeEventListener('devicemotion', handleDeviceMotion, true)
+	}, [view, isShakeMode])
+
+	// Physics simulation loop
+	useEffect(() => {
+		if (!isShakeMode || circleEntities.length === 0) return
+
+		const updatePhysics = () => {
+			setCircleEntities((prevCircles) => {
+				const GRAVITY = 0.8
+				const BOUNCE = 0.7
+				const FRICTION = 0.98
+				const DAMPING = 0.99
+				const CIRCLE_RADIUS = 30
+				const CONTAINER_WIDTH = 600
+				const CONTAINER_HEIGHT = 85 * window.innerHeight / 100
+
+				const updated = prevCircles.map((circle) => {
+					let { x, y, vx, vy, rotation, angularVelocity } = circle
+
+					// Apply gravity
+					vy += GRAVITY
+
+					// Apply friction
+					vx *= FRICTION
+					vy *= DAMPING
+
+					// Update position
+					x += vx
+					y += vy
+
+					// Bounce off bottom
+					if (y + CIRCLE_RADIUS > CONTAINER_HEIGHT) {
+						y = CONTAINER_HEIGHT - CIRCLE_RADIUS
+						vy *= -BOUNCE
+						vy *= 0.95 // Additional damping on bounce
+					}
+
+					// Bounce off top
+					if (y - CIRCLE_RADIUS < 0) {
+						y = CIRCLE_RADIUS
+						vy *= -BOUNCE
+					}
+
+					// Bounce off sides
+					if (x - CIRCLE_RADIUS < 0) {
+						x = CIRCLE_RADIUS
+						vx *= -BOUNCE
+					}
+					if (x + CIRCLE_RADIUS > CONTAINER_WIDTH) {
+						x = CONTAINER_WIDTH - CIRCLE_RADIUS
+						vx *= -BOUNCE
+					}
+
+					// Update rotation
+					rotation += angularVelocity
+					angularVelocity *= 0.98
+
+					// Prevent stacking directly horizontal
+					if (Math.abs(rotation % 180) < 5) {
+						rotation += 15
+					}
+					if (Math.abs((rotation + 90) % 180) < 5) {
+						rotation += 15
+					}
+
+					return { ...circle, x, y, vx, vy, rotation, angularVelocity }
+				})
+
+				// Simple collision detection between circles
+				for (let i = 0; i < updated.length; i++) {
+					for (let j = i + 1; j < updated.length; j++) {
+						const dx = updated[j].x - updated[i].x
+						const dy = updated[j].y - updated[i].y
+						const dist = Math.sqrt(dx * dx + dy * dy)
+						const minDist = CIRCLE_RADIUS * 2
+
+						if (dist < minDist && dist > 0) {
+							const angle = Math.atan2(dy, dx)
+							const overlap = minDist - dist
+							const moveX = (overlap / 2) * Math.cos(angle)
+							const moveY = (overlap / 2) * Math.sin(angle)
+
+							updated[i].x -= moveX
+							updated[i].y -= moveY
+							updated[j].x += moveX
+							updated[j].y += moveY
+
+							// Exchange velocity components
+							const temp = updated[i].vx
+							updated[i].vx = updated[j].vx * 0.9
+							updated[j].vx = temp * 0.9
+						}
+					}
+				}
+
+				return updated
+			})
+
+			animationFrameRef.current = requestAnimationFrame(updatePhysics)
+		}
+
+		animationFrameRef.current = requestAnimationFrame(updatePhysics)
+		return () => cancelAnimationFrame(animationFrameRef.current)
+	}, [isShakeMode])
+
+	const handleExitShakeMode = () => {
+		setIsShakeMode(false)
+		setCircleEntities([])
+		if (animationFrameRef.current) {
+			cancelAnimationFrame(animationFrameRef.current)
+		}
+	}
 
 	const handleCreateNote = () => {
 		setTitleInput('')
@@ -679,6 +838,27 @@ function App() {
 							))}
 						</div>
 					</main>
+					{isShakeMode && (
+						<div className="shake-mode-container">
+							{circleEntities.map((circle) => (
+								<div
+									key={circle.id}
+									className="shake-circle"
+									style={{
+										left: `${circle.x}px`,
+										top: `${circle.y}px`,
+										transform: `translate(-50%, -50%) rotate(${circle.rotation}deg)`,
+										background: circle.color,
+									}}
+								>
+									<span className="shake-circle__text">{circle.title}</span>
+								</div>
+							))}
+							<button className="shake-mode-exit" onClick={handleExitShakeMode}>
+								✕
+							</button>
+						</div>
+					)}
 				</>
 			)}
 
