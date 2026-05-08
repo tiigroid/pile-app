@@ -427,7 +427,7 @@ function App() {
 			setDraggedEntityId(null)
 		}
 	}
-
+//test
 	return (
 		<div className="app">
 			{view === 'main' && (

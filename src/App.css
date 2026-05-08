@@ -319,7 +319,7 @@ body {
 
 /* Remove left border from left-side items */
 .preset-grid__cell:nth-child(-n+2) {
-	border-left: none;
+	border-left: none; 
 }
 
 /* Remove right border from right-side items */
