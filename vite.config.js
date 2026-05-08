@@ -17,12 +17,12 @@ export default defineConfig({
         theme_color: '#000000',
         icons: [
           {
-            src: '/my-project/icon-192.png',
+            src: '/pile-app/icon-192.png',
             sizes: '192x192',
             type: 'image/png',
           },
           {
-            src: '/my-project/icon-512.png',
+            src: '/pile-app/icon-512.png',
             sizes: '512x512',
             type: 'image/png',
           },
