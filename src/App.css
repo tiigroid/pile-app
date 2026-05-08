@@ -295,10 +295,12 @@ body {
 	position: fixed;
   font-size: 14px;
   line-height: 1;
-	bottom: 5vh;
+	bottom: 0;
 	left: 0;
 	right: 0;
-	height: 10vh;
+	height: 15vh;
+  padding-bottom: 5vh;
+  background-color: var(--color-border);
 	display: grid;
 	grid-template-rows: 1fr 1fr;
   grid-template-columns: repeat(4, 1fr);
@@ -309,9 +311,20 @@ body {
 	display: flex;
 	align-items: center;
 	gap: var(--spacing-xs);
+  background-color: #000;
 	border: 1px solid var(--color-border);
   box-sizing: border-box;
 	padding: 0 var(--spacing-sm);
+}
+
+/* Remove left border from left-side items */
+.preset-grid__cell:nth-child(4n+1) {
+	border-left: none;
+}
+
+/* Remove right border from right-side items */
+.preset-grid__cell:nth-child(4n) {
+	border-right: none;
 }
 
 .preset-grid__avatar {
