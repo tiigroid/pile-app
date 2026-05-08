@@ -7,6 +7,7 @@ body,
 #root {
   min-height: 100%;
   margin: 0;
+  overscroll-behavior: none;
 }
 
 body {
@@ -79,6 +80,7 @@ body {
 	flex-direction: column;
   overflow-y: scroll;
   height: 85vh;
+	overscroll-behavior: contain;
 }
 
 .app__text {
@@ -390,6 +392,7 @@ body {
 	cursor: pointer;
 	-webkit-tap-highlight-color: transparent;
 	user-select: none;
+	touch-action: none;
 }
 
 .entity-item__avatar {

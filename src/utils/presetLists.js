@@ -11,7 +11,27 @@ const PRESET_LIST_NAMES = [
 	'Etc'
 ]
 
+const PRESET_DISPLAY_NAMES = {
+	'Mon': 'Monday',
+	'Tue': 'Tuesday',
+	'Wed': 'Wednesday',
+	'Thu': 'Thursday',
+	'Fri': 'Friday',
+	'Sat': 'Saturday',
+	'Sun': 'Sunday',
+	'Etc': 'Etc'
+}
+
 const DEFAULT_COLOR = 'slate'
+
+/**
+ * Get display name for a preset list
+ * @param {string} shortName - Short name like 'Mon'
+ * @returns {string} Full display name like 'Monday'
+ */
+export function getPresetDisplayName(shortName) {
+	return PRESET_DISPLAY_NAMES[shortName] || shortName
+}
 
 /**
  * Initialize preset lists if they don't exist

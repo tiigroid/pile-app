@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import './App.css'
 import { initDB, getAllRecords, addOrUpdate } from './utils/indexeddb'
 import { DB_STORES } from './config/db'
-import { initializePresetLists, PRESET_LIST_NAMES } from './utils/presetLists'
+import { initializePresetLists, PRESET_LIST_NAMES, getPresetDisplayName } from './utils/presetLists'
 
 const PRESET_COLORS = [
 	{ name: 'red', hex: '#ef4444' },
@@ -427,6 +427,9 @@ function App() {
 		// If long press is complete, use isLongPressRef instead of draggedEntityId (which may not be set yet due to async state)
 		if (!isLongPressRef.current) return
 		
+		// Prevent default scrolling during drag
+		e.preventDefault()
+		
 		const touch = e.touches[0]
 		ghostPositionRef.current = { x: touch.clientX, y: touch.clientY }
 		
@@ -749,7 +752,7 @@ function App() {
 						type="text"
 						className="fullscreen-view__input"
 						placeholder={editingEntity.type === 'note' ? 'Note title' : 'List title'}
-						value={editingEntity.title}
+						value={editingEntity.preset ? getPresetDisplayName(editingEntity.title) : editingEntity.title}
 					onChange={(e) => handleEntityFieldChange('title', e.target.value)}
 					disabled={editingEntity.preset}
 				/>
