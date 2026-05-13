@@ -18,13 +18,16 @@ body {
 
 .app {
   min-height: 100dvh;
+
   padding-top: env(safe-area-inset-top);
   padding-right: env(safe-area-inset-right);
   padding-bottom: env(safe-area-inset-bottom);
   padding-left: env(safe-area-inset-left);
+}
+
+.app {
 	display: flex;
 	flex-direction: column;
-	position: relative;
 }
 
 .app__header {
@@ -302,7 +305,7 @@ body {
 	right: 0;
 	height: 15vh;
   padding-bottom: 5vh;
-  background-color: var(--color-border);
+  background-color: #000;
 	display: grid;
 	grid-template-rows: 1fr 1fr;
   grid-template-columns: repeat(4, 1fr);
@@ -635,62 +638,4 @@ body {
 	cursor: pointer;
 	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 	user-select: none;
-}
-
-/* Shake Mode */
-/* ========================================== */
-.shake-mode-container {
-	position: fixed;
-	top: 5vh;
-	left: 50%;
-	transform: translateX(-50%);
-	width: 100%;
-	max-width: 600px;
-	height: 80vh;
-	background: #000;
-	z-index: 5000;
-	overflow: hidden;
-	pointer-events: none;
-}
-
-.shake-circle {
-	position: absolute;
-	width: 15vh;
-	height: 15vh;
-	border-radius: 50%;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	font-size: 16px;
-	font-weight: 600;
-	color: var(--color-text-primary);
-	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-	text-align: center;
-	padding: 8px;
-	line-height: 1.2;
-	overflow: hidden;
-}
-
-.shake-circle__text {
-	pointer-events: none;
-	user-select: none;
-}
-
-.shake-mode-exit {
-	position: absolute;
-	top: 16px;
-	right: 16px;
-	width: 44px;
-	height: 44px;
-	border-radius: 50%;
-	background: rgba(255, 255, 255, 0.1);
-	border: 1px solid rgba(255, 255, 255, 0.2);
-	color: var(--color-text-primary);
-	font-size: 24px;
-	cursor: pointer;
-	z-index: 5001;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	-webkit-tap-highlight-color: transparent;
 }

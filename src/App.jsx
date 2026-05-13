@@ -58,12 +58,6 @@ function App() {
 	const noteCreatedRef = useRef(false) // Track if note was already created during note-create session
 	const createdNoteIdRef = useRef(null) // Track the ID of the created note during note-create session
 	const createNoteAutoSaveTimerRef = useRef(null) // Auto-save timer for note creation view
-	const [isShakeMode, setIsShakeMode] = useState(false) // Shake mode active
-	const [circleEntities, setCircleEntities] = useState([]) // Circles with physics state
-	const animationFrameRef = useRef(null) // RAF for physics loop
-	const circleOffsetXRef = useRef({}) // Offset X positions for spreading circles
-	const lastAccelRef = useRef({ x: 0, y: 0, z: 0 }) // Last acceleration for shake detection
-	const shakeModeStartTimeRef = useRef(null) // Track when shake mode started
 
 	// Get non-preset entities sorted by order
 	const getMainEntities = () => {
@@ -145,226 +139,6 @@ function App() {
 			}
 		}
 	}, [])
-
-	// Shake detection and physics simulation
-	useEffect(() => {
-		const handleDeviceMotion = (e) => {
-			const { x, y, z } = e.acceleration || {}
-			if (!x || !y || !z) return
-
-			// Calculate change in acceleration
-			const deltaX = Math.abs(x - lastAccelRef.current.x)
-			const deltaY = Math.abs(y - lastAccelRef.current.y)
-			const deltaZ = Math.abs(z - lastAccelRef.current.z)
-			
-			lastAccelRef.current = { x, y, z }
-
-			// Shake threshold (combined acceleration change)
-			const shakeThreshold = 50
-			const totalDelta = deltaX + deltaY + deltaZ
-
-			if (totalDelta > shakeThreshold && view === 'main' && !isShakeMode) {
-				// Trigger shake mode
-				const mainEntities = getMainEntities()
-				const appContent = document.querySelector('.app__content')
-				const contentRect = appContent?.getBoundingClientRect()
-				
-				// Calculate container position (fixed, centered)
-				const containerWidth = Math.min(600, window.innerWidth)
-				const containerLeft = (window.innerWidth - containerWidth) / 2
-				const containerTop = window.innerHeight * 0.05 // 5vh
-				
-				const circles = mainEntities.map((entity, idx) => {
-					// Spread with strong horizontal velocities
-					const numCircles = mainEntities.length
-					const baseX = containerWidth * 0.15 + (idx * (containerWidth * 0.7 / (Math.max(1, numCircles - 1))))
-					
-					// Very strong horizontal velocities to make them spread as they fall
-					const horizontalVelocities = [-12, 0, 12]
-					const vx = numCircles > 1 ? horizontalVelocities[idx % horizontalVelocities.length] : 0
-					
-					const circleObj = {
-						id: entity.id,
-						title: entity.title,
-						color: entity.color,
-						x: baseX,
-						y: 20,
-						vx,  // Very strong: ±12px/frame for hard spread
-						vy: -8 - Math.random() * 3,
-						rotation: (Math.random() - 0.5) * 15,
-						angularVelocity: (Math.random() - 0.5) * 1,
-					}
-					return circleObj
-				})
-				setCircleEntities(circles)
-				shakeModeStartTimeRef.current = Date.now()
-				setIsShakeMode(true)
-			}
-		}
-
-		window.addEventListener('devicemotion', handleDeviceMotion, true)
-		return () => window.removeEventListener('devicemotion', handleDeviceMotion, true)
-	}, [view, isShakeMode])
-
-	// Physics simulation loop
-	useEffect(() => {
-		if (!isShakeMode || circleEntities.length === 0) return
-
-		const updatePhysics = () => {
-			setCircleEntities((prevCircles) => {
-				const GRAVITY = 2.5
-				const BOUNCE = 0.85
-				const FRICTION = 0.98
-				const DAMPING = 0.97
-				const SETTLE_TIME = 2000
-				
-				const CIRCLE_RADIUS = window.innerHeight * 0.075
-				const CONTAINER_WIDTH = Math.min(600, window.innerWidth)
-				const CONTAINER_HEIGHT = window.innerHeight * 0.80
-
-				const elapsedTime = Date.now() - (shakeModeStartTimeRef.current || Date.now())
-				const isSettled = elapsedTime > SETTLE_TIME
-
-				const updated = prevCircles.map((circle) => {
-					let { x, y, vx, vy, rotation, angularVelocity } = circle
-
-					if (isSettled) {
-						vx = 0
-						vy = 0
-						angularVelocity = 0
-						return { ...circle, x, y, vx, vy, rotation, angularVelocity }
-					}
-
-					vy += GRAVITY
-					vx *= FRICTION
-					vy *= DAMPING
-
-					x += vx
-					y += vy
-
-					if (y + CIRCLE_RADIUS > CONTAINER_HEIGHT) {
-						y = CONTAINER_HEIGHT - CIRCLE_RADIUS
-						vy *= -BOUNCE
-						vy *= 0.95
-					}
-
-					if (y - CIRCLE_RADIUS < 0) {
-						y = CIRCLE_RADIUS
-						vy *= -BOUNCE
-					}
-
-					if (x - CIRCLE_RADIUS < 0) {
-						x = CIRCLE_RADIUS
-						vx *= -BOUNCE
-					}
-					if (x + CIRCLE_RADIUS > CONTAINER_WIDTH) {
-						x = CONTAINER_WIDTH - CIRCLE_RADIUS
-						vx *= -BOUNCE
-					}
-
-					const VELOCITY_THRESHOLD = 0.1
-					if (Math.abs(vx) < VELOCITY_THRESHOLD && Math.abs(vy) < VELOCITY_THRESHOLD) {
-						vx = 0
-						vy = 0
-						angularVelocity = 0
-					}
-
-					rotation += angularVelocity
-					angularVelocity *= 0.98
-
-					if (rotation > 20) {
-						rotation = 20
-						angularVelocity *= -1
-					}
-					if (rotation < -20) {
-						rotation = -20
-						angularVelocity *= -1
-					}
-
-					return { ...circle, x, y, vx, vy, rotation, angularVelocity }
-				})
-
-				for (let i = 0; i < updated.length; i++) {
-					for (let j = i + 1; j < updated.length; j++) {
-						const dx = updated[j].x - updated[i].x
-						const dy = updated[j].y - updated[i].y
-						const dist = Math.sqrt(dx * dx + dy * dy)
-						const minDist = CIRCLE_RADIUS * 2
-
-						if (dist < minDist && dist > 0) {
-							const angle = Math.atan2(dy, dx)
-							const overlap = minDist - dist
-							const moveX = (overlap / 1.5 + 5) * Math.cos(angle)
-							const moveY = (overlap / 1.5 + 5) * Math.sin(angle)
-
-							updated[i].x -= moveX
-							updated[i].y -= moveY
-							updated[j].x += moveX
-							updated[j].y += moveY
-
-							const repulsionForce = 8
-							updated[i].vx = Math.cos(angle + Math.PI) * repulsionForce
-							updated[i].vy = Math.sin(angle + Math.PI) * repulsionForce
-							updated[j].vx = Math.cos(angle) * repulsionForce
-							updated[j].vy = Math.sin(angle) * repulsionForce
-						}
-					}
-				}
-
-				return updated
-			})
-
-			animationFrameRef.current = requestAnimationFrame(updatePhysics)
-		}
-
-		animationFrameRef.current = requestAnimationFrame(updatePhysics)
-		return () => cancelAnimationFrame(animationFrameRef.current)
-	}, [isShakeMode])
-
-	const handleExitShakeMode = () => {
-		setIsShakeMode(false)
-		setCircleEntities([])
-		shakeModeStartTimeRef.current = null
-		if (animationFrameRef.current) {
-			cancelAnimationFrame(animationFrameRef.current)
-		}
-	}
-
-	const handleTestShake = () => {
-		if (view !== 'main' || isShakeMode) return
-		
-		// Manually trigger shake mode for testing
-		const mainEntities = getMainEntities()
-		
-		// Calculate container position (fixed, centered)
-		const containerWidth = Math.min(600, window.innerWidth)
-		const containerLeft = (window.innerWidth - containerWidth) / 2
-		const containerTop = window.innerHeight * 0.05 // 5vh
-		
-		const circles = mainEntities.map((entity, idx) => {
-			const contentDiv = document.querySelector(`[data-entity-id="${entity.id}"]`)
-			const rect = contentDiv?.getBoundingClientRect()
-			
-			// Position relative to the fixed container
-			const startX = rect?.left - containerLeft + 40 || 50
-			const startY = rect?.top - containerTop || 50 + idx * 10
-			
-			return {
-				id: entity.id,
-				title: entity.title,
-				color: entity.color,
-				x: startX,
-				y: startY,
-				vx: (Math.random() - 0.5) * 3,
-				vy: -5 - Math.random() * 5, // Start with upward velocity
-				rotation: Math.random() * 20 - 10, // Slight tilt: -10 to +10 degrees
-				angularVelocity: (Math.random() - 0.5) * 2, // Smaller rotation
-			}
-		})
-		setCircleEntities(circles)
-		shakeModeStartTimeRef.current = Date.now()
-		setIsShakeMode(true)
-	}
 
 	const handleCreateNote = () => {
 		setTitleInput('')
@@ -792,9 +566,6 @@ function App() {
 						<button className="app__header-btn">
 							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 550 550"><path d="M320 0c-17.7 0-32 14.3-32 32s14.3 32 32 32l82.7 0-201.4 201.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L448 109.3 448 192c0 17.7 14.3 32 32 32s32-14.3 32-32l0-160c0-17.7-14.3-32-32-32L320 0zM80 96C35.8 96 0 131.8 0 176L0 432c0 44.2 35.8 80 80 80l256 0c44.2 0 80-35.8 80-80l0-80c0-17.7-14.3-32-32-32s-32 14.3-32 32l0 80c0 8.8-7.2 16-16 16L80 448c-8.8 0-16-7.2-16-16l0-256c0-8.8 7.2-16 16-16l80 0c17.7 0 32-14.3 32-32s-14.3-32-32-32L80 96z"/></svg>
 						</button>
-						<button className="app__header-btn" onClick={isShakeMode ? handleExitShakeMode : handleTestShake} title={isShakeMode ? 'Exit shake' : 'Test shake'}>
-							{isShakeMode ? '✕' : '📱'}
-						</button>
 					</header>
 					<main className="app__main">
 						<div className="app__content">
@@ -908,28 +679,6 @@ function App() {
 							))}
 						</div>
 					</main>
-					{isShakeMode && (
-						<div className="shake-mode-container">
-							{circleEntities
-								.map((circle, idx) => ({ circle, idx }))
-								.sort((a, b) => a.circle.y - b.circle.y)
-								.map(({ circle, idx }) => (
-									<div
-										key={circle.id}
-										className="shake-circle"
-										style={{
-											left: `${circle.x}px`,
-											top: `${circle.y}px`,
-											zIndex: idx,
-											transform: `translate(-50%, -50%) rotate(${circle.rotation}deg)`,
-											background: circle.color,
-										}}
-									>
-										<span className="shake-circle__text">{circle.title}</span>
-									</div>
-								))}
-						</div>
-					)}
 				</>
 			)}
 
