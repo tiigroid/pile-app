@@ -36,7 +36,7 @@ body {
 	align-items: center;
 	justify-content: flex-end;
 	gap: 16px;
-	padding: 8px var(--spacing-md);
+	padding: 8px var(--spacing-lg);
 }
 
 .app__header-btn {
