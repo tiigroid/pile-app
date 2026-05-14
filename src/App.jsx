@@ -58,6 +58,10 @@ function App() {
 	const noteCreatedRef = useRef(false) // Track if note was already created during note-create session
 	const createdNoteIdRef = useRef(null) // Track the ID of the created note during note-create session
 	const createNoteAutoSaveTimerRef = useRef(null) // Auto-save timer for note creation view
+	const [swipedEntityId, setSwipedEntityId] = useState(null) // Which entity is being swiped
+	const [deletingEntityId, setDeletingEntityId] = useState(null) // Which entity's button is closing
+	const swipeStartX = useRef(0) // Track swipe start position
+	const [deleteConfirmEntityId, setDeleteConfirmEntityId] = useState(null) // Entity awaiting delete confirmation
 
 	// Get non-preset entities sorted by order
 	const getMainEntities = () => {
@@ -81,14 +85,58 @@ function App() {
 	useEffect(() => {
 		if (view === 'entity-view' && editingEntity?.type === 'note' && entityViewTextareaRef.current) {
 			setTimeout(() => {
-				if (entityViewTextareaRef.current) {
-					entityViewTextareaRef.current.focus()
-					const length = entityViewTextareaRef.current.value.length
-					entityViewTextareaRef.current.setSelectionRange(length, length)
+				const element = entityViewTextareaRef.current
+				if (element) {
+					element.focus()
+					// Position cursor at end
+					const length = element.value.length
+					element.setSelectionRange(length, length)
 				}
 			}, 0)
 		}
 	}, [view, editingEntity])
+
+	// Sync uncontrolled textarea when switching notes (without moving cursor)
+	useEffect(() => {
+		if (entityViewTextareaRef.current && editingEntity?.type === 'note') {
+			entityViewTextareaRef.current.value = editingEntity.content || ''
+		}
+	}, [editingEntity?.id])
+
+	// Update display layer periodically from uncontrolled textarea (instead of on every keystroke)
+	useEffect(() => {
+		if (view !== 'entity-view' || editingEntity?.type !== 'note') return
+
+		const interval = setInterval(() => {
+			const textarea = entityViewTextareaRef.current
+			if (textarea) {
+				const currentValue = textarea.value
+				if (currentValue !== editingEntity.content) {
+					setEditingEntity(prev => ({ ...prev, content: currentValue }))
+				}
+			}
+		}, 100)
+
+		return () => clearInterval(interval)
+	}, [view, editingEntity?.type])
+
+	// Close delete button on outside click (blur)
+	useEffect(() => {
+		if (!swipedEntityId) return
+
+		const handleClickOutside = (e) => {
+			const deleteBtn = e.target.closest('.entity-item__delete-btn')
+			const wrapper = e.target.closest('.entity-item-wrapper')
+			
+			// Only close if clicking outside the wrapper
+			if (!wrapper || (wrapper && !deleteBtn)) {
+				setSwipedEntityId(null)
+			}
+		}
+
+		document.addEventListener('click', handleClickOutside)
+		return () => document.removeEventListener('click', handleClickOutside)
+	}, [swipedEntityId])
 
 	// Close color picker on blur (click outside)
 	useEffect(() => {
@@ -155,7 +203,25 @@ function App() {
 		setView('list-create')
 	}
 
-	const handleBack = () => {
+	const handleBack = async () => {
+		// Flush any pending note autosave before leaving
+		if (createNoteAutoSaveTimerRef.current && createdNoteIdRef.current && noteCreatedRef.current) {
+			clearTimeout(createNoteAutoSaveTimerRef.current)
+			try {
+				const existingNote = entities.find(e => e.id === createdNoteIdRef.current)
+				if (existingNote) {
+					const finalTitle = (titleInput || '').trim() || 'Untitled'
+					await addOrUpdate(dbRef.current, 'entities', {
+						...existingNote,
+						title: finalTitle,
+						content: bodyInput || ''
+					})
+					await loadAllEntities(dbRef.current)
+				}
+			} catch (err) {
+				console.error('Failed to flush note autosave:', err)
+			}
+		}
 		setView('main')
 		setTitleInput('')
 		setBodyInput('')
@@ -234,7 +300,7 @@ function App() {
 			} catch (err) {
 				console.error('Failed to auto-save note:', err)
 			}
-		}, 300)
+		}, 100)
 	}
 
 	const handleTitleInputChange = (e) => {
@@ -261,7 +327,7 @@ function App() {
 		}
 	}
 
-	const handleSwipe = () => {
+	const handleSwipe = async () => {
 		const swipeThreshold = 50 // minimum pixels to consider as swipe
 		const diff = touchEndX.current - touchStartX.current
 
@@ -269,7 +335,7 @@ function App() {
 		if (diff > swipeThreshold) {
 			if (view === 'note-create') {
 				// Just go back, note is already auto-created if there's content
-				handleBack()
+				await handleBack()
 			} else if (view === 'list-create') {
 				// If title is empty, just go back without saving
 				if (!titleInput.trim()) {
@@ -283,7 +349,7 @@ function App() {
 				handleSaveListAndReturn()
 			} else if (view === 'entity-view') {
 				// Close entity view on swipe back
-				handleBackFromEntityView()
+				await handleBackFromEntityView()
 			}
 		}
 	}
@@ -396,15 +462,71 @@ function App() {
 	}
 
 	// Touch handlers for mobile drag-and-drop (mobile-only)
+	
+	// Check if entity should show delete confirmation before deletion
+	const shouldShowDeleteConfirm = (entity) => {
+		const isUntitled = entity.title === 'Untitled'
+		const isEmpty = !entity.content && (!entity.items || entity.items.length === 0)
+		const isDefaultColor = entity.color === DEFAULT_COLOR || !entity.color
+		
+		// Skip confirmation only if: untitled AND empty AND (no color OR default color)
+		return !(isUntitled && isEmpty && isDefaultColor)
+	}
+
+	// Delete an entity from the database
+	const handleDeleteEntity = async (entityId) => {
+		if (!dbRef.current) return
+
+		try {
+			// For now, we don't have a delete function, so we'll need to implement deletion
+			// by removing from the entities list and re-saving all
+			const updatedEntities = entities.filter(e => e.id !== entityId)
+			
+			// Reorder remaining entities
+			const reorderedEntities = updatedEntities.map((e, idx) => ({
+				...e,
+				order: idx
+			}))
+			
+			// Save all reordered entities
+			for (const entity of reorderedEntities) {
+				await addOrUpdate(dbRef.current, 'entities', entity)
+			}
+			
+			await loadAllEntities(dbRef.current)
+			setSwipedEntityId(null)
+			setDeleteConfirmEntityId(null)
+		} catch (err) {
+			console.error('Failed to delete entity:', err)
+		}
+	}
+
+	// Handle swipe delete action
+	const handleSwipeDelete = (entityId) => {
+		const entity = entities.find(e => e.id === entityId)
+		if (!entity) return
+
+		if (shouldShowDeleteConfirm(entity)) {
+			// Show confirmation modal
+			setDeleteConfirmEntityId(entityId)
+		} else {
+			// Delete immediately
+			handleDeleteEntity(entityId)
+		}
+	}
 	const handleEntityTouchStart = (e, entityId) => {
 		// Reset long press state
 		isLongPressRef.current = false
 		longPressEntityIdRef.current = entityId
 		const touch = e.touches[0]
 		longPressStartRef.current = { x: touch.clientX, y: touch.clientY }
+		swipeStartX.current = touch.clientX
 
 		// Start timer for long press (300ms)
 		dragDelayTimerRef.current = setTimeout(() => {
+			// Don't start drag if a delete button is showing (allow swipes instead)
+			if (swipedEntityId) return
+
 			isLongPressRef.current = true
 			setDraggedEntityId(entityId)
 			// Initialize hover index to original position to show empty placeholder there
@@ -417,7 +539,58 @@ function App() {
 	}
 
 	const handleEntityTouchMove = (e) => {
-		// If we haven't completed the long press, cancel it on movement
+		const touch = e.touches[0]
+		const startPos = longPressStartRef.current
+
+		// If long press not yet triggered, check for swipe
+		if (!isLongPressRef.current && dragDelayTimerRef.current && startPos) {
+			const deltaX = startPos.x - touch.clientX // negative = right to left swipe
+			const deltaY = Math.abs(startPos.y - touch.clientY)
+
+			// Detect right-to-left swipe (opening delete button)
+			if (deltaX > 10 && deltaY < 20) {
+				// It's a swipe, not a drag - cancel long press
+				clearTimeout(dragDelayTimerRef.current)
+				dragDelayTimerRef.current = null
+				
+				// If another entity has the button showing, close it first with animation
+				if (swipedEntityId && swipedEntityId !== longPressEntityIdRef.current) {
+					setDeletingEntityId(swipedEntityId)
+					setTimeout(() => {
+						setSwipedEntityId(longPressEntityIdRef.current)
+						setDeletingEntityId(null)
+					}, 200)
+				} else {
+					// Show delete button for this entity
+					setSwipedEntityId(longPressEntityIdRef.current)
+				}
+				return
+			}
+
+			// Detect left-to-right swipe (closing delete button - unswipe)
+			if (deltaX < -10 && deltaY < 20) {
+				// Unswiping
+				if (swipedEntityId === longPressEntityIdRef.current) {
+					// Close the button with animation
+					clearTimeout(dragDelayTimerRef.current)
+					dragDelayTimerRef.current = null
+					setDeletingEntityId(longPressEntityIdRef.current)
+					setTimeout(() => {
+						setSwipedEntityId(null)
+						setDeletingEntityId(null)
+					}, 200)
+					return
+				}
+			}
+
+			// Detect vertical drag attempt - cancel swipe if moving vertically
+			if (deltaY > 30) {
+				// Will let long press continue for drag
+				return
+			}
+		}
+
+		// If we haven't completed the long press, cancel it on significant movement
 		if (!isLongPressRef.current && dragDelayTimerRef.current) {
 			clearTimeout(dragDelayTimerRef.current)
 			dragDelayTimerRef.current = null
@@ -430,7 +603,6 @@ function App() {
 		// Prevent default scrolling during drag
 		e.preventDefault()
 		
-		const touch = e.touches[0]
 		ghostPositionRef.current = { x: touch.clientX, y: touch.clientY }
 		
 		// Find element under touch point
@@ -519,7 +691,7 @@ function App() {
 			clearTimeout(autoSaveTimerRef.current)
 		}
 
-		// Set new timer for autosave (300ms debounce)
+		// Set new timer for autosave (100ms debounce)
 		autoSaveTimerRef.current = setTimeout(async () => {
 			try {
 				await addOrUpdate(dbRef.current, 'entities', updatedEntity)
@@ -529,7 +701,7 @@ function App() {
 			} catch (err) {
 				console.error('Failed to autosave entity:', err)
 			}
-		}, 300)
+		}, 50)
 	}
 
 	// Handle entity field changes with autosave
@@ -540,14 +712,112 @@ function App() {
 	}
 
 	// Close entity view and return to main
-	const handleBackFromEntityView = () => {
+	const handleBackFromEntityView = async () => {
+		// Flush any pending autosave before leaving
+		if (autoSaveTimerRef.current && editingEntity) {
+			clearTimeout(autoSaveTimerRef.current)
+			try {
+				await addOrUpdate(dbRef.current, 'entities', editingEntity)
+				const allEntities = await getAllRecords(dbRef.current, 'entities')
+				setEntities(allEntities)
+			} catch (err) {
+				console.error('Failed to flush autosave:', err)
+			}
+		}
 		setViewingEntityId(null)
 		setEditingEntity(null)
 		setView('main')
 		setShowColorPicker(false)
-		// Clear any pending autosave
-		if (autoSaveTimerRef.current) {
-			clearTimeout(autoSaveTimerRef.current)
+	}
+
+	// Handle note body input - just let the periodic effect sync it
+	const handleNoteBodyInput = (e) => {
+		// No-op: the periodic effect handles syncing and autosave
+		// This prevents state updates on every keystroke which was causing cursor issues
+	}
+
+	// Handle special keyboard events in note body
+	const handleNoteBodyKeyDown = (e) => {
+		const textarea = entityViewTextareaRef.current
+		if (!textarea) return
+
+		const content = textarea.value
+		const selectionStart = textarea.selectionStart
+		const selectionEnd = textarea.selectionEnd
+
+		if (e.key === 'Enter') {
+			const beforeCursor = content.substring(0, selectionStart)
+			const lastNewline = beforeCursor.lastIndexOf('\n')
+			const currentLineStart = lastNewline + 1
+			const currentLine = beforeCursor.substring(currentLineStart)
+			
+			// Check if current line starts with "- " or is just "-"
+			const trimmed = currentLine.trim()
+			const isListItem = trimmed.startsWith('- ') || trimmed === '-'
+			const isIndented = currentLine.startsWith('  ') && !currentLine.startsWith('- ')
+			
+			if (isListItem) {
+				e.preventDefault()
+				
+				// Insert newline with "- " prefix
+				const newContent = 
+					content.substring(0, selectionStart) + 
+					'\n- ' + 
+					content.substring(selectionEnd)
+				
+				textarea.value = newContent
+				
+				// Move cursor after "- "
+				textarea.selectionStart = selectionStart + 3
+				textarea.selectionEnd = selectionStart + 3
+				
+				// Trigger autosave without immediate state update
+				handleAutoSave({ ...editingEntity, content: newContent })
+			} else if (isIndented) {
+				e.preventDefault()
+				
+				// Insert newline with "  " (two spaces) prefix
+				const newContent = 
+					content.substring(0, selectionStart) + 
+					'\n  ' + 
+					content.substring(selectionEnd)
+				
+				textarea.value = newContent
+				
+				// Move cursor after "  "
+				textarea.selectionStart = selectionStart + 3
+				textarea.selectionEnd = selectionStart + 3
+				
+				// Trigger autosave without immediate state update
+				handleAutoSave({ ...editingEntity, content: newContent })
+			}
+		} else if (e.key === 'Backspace') {
+			// After backspace, check if we need to clean up lone dashes or indentation
+			setTimeout(() => {
+				const newContent = textarea.value
+				const lines = newContent.split('\n')
+				let changed = false
+				
+				for (let i = 0; i < lines.length; i++) {
+					// Remove if line is exactly "-" (no trailing space)
+					if (lines[i].trim() === '-' && !lines[i].endsWith(' ')) {
+						lines[i] = ''
+						changed = true
+					}
+					// Remove if line is exactly "  " (two spaces, nothing else)
+					if (lines[i] === '  ') {
+						lines[i] = ''
+						changed = true
+					}
+				}
+				
+				if (changed) {
+					const updatedContent = lines.join('\n')
+					textarea.value = updatedContent
+					// Trigger autosave without immediate state update
+					handleAutoSave({ ...editingEntity, content: updatedContent })
+				}
+			}, 0)
 		}
 	}
 
@@ -571,14 +841,14 @@ function App() {
 						<div className="app__content">
 						{/* Notes and Lists - Draggable (Mouse & Touch) */}
 						{(draggedEntityId && itemsOrder.length > 0 ? itemsOrder : getMainEntities()).map((entity, idx) => (
-							<div key={`wrapper-${entity.id}`}>
+							<div key={`wrapper-${entity.id}`} className="entity-item-wrapper">
 								<div 
 									data-entity-id={entity.id}
 									className={`entity-item ${draggedEntityId === entity.id ? 'entity-item--hidden' : ''}`}
 									onTouchStart={(e) => handleEntityTouchStart(e, entity.id)}
 									onTouchMove={(e) => handleEntityTouchMove(e)}
 									onTouchEnd={(e) => handleEntityTouchEnd(e)}
-									onClick={() => !draggedEntityId && handleOpenEntity(entity)}
+									onClick={() => !draggedEntityId && !swipedEntityId && handleOpenEntity(entity)}
 									>
 									<div 
 										className="entity-item__avatar"
@@ -599,6 +869,18 @@ function App() {
 										{entity.items && <span className="entity-item__count">{entity.items.length}</span>}
 									</div>
 								</div>
+								{/* Delete button that slides in on swipe */}
+								{swipedEntityId === entity.id && (
+									<button
+										className={`entity-item__delete-btn${deletingEntityId === entity.id ? ' closing' : ''}`}
+										onClick={() => handleSwipeDelete(entity.id)}
+										title="Delete"
+									>
+										<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512">
+											<path d="M55.1 73.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L147.2 256 9.9 393.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L192.5 301.3 329.9 438.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L237.8 256 375.1 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L192.5 210.7 55.1 73.4z"/>
+										</svg>
+										</button>
+								)}
 								{/* Show empty placeholder at hover position */}
 								{draggedEntityId && hoverIndex === idx && (
 									<div className="entity-item--empty" key={`empty-${idx}`} />
@@ -759,14 +1041,31 @@ function App() {
 				</div>
 				<div className="fullscreen-view__content">
 					{editingEntity.type === 'note' && (
-						<textarea
-							ref={entityViewTextareaRef}
-							className="fullscreen-view__textarea"
-
-							value={editingEntity.content || ''}
-							onChange={(e) => handleEntityFieldChange('content', e.target.value)}
-							autoFocus
-						/>
+						<>
+							{/* Styled display layer */}
+							<div className="fullscreen-view__textarea fullscreen-view__textarea--display">
+								{(editingEntity.content || '').split('\n').map((line, idx) => {
+									const trimmed = line.trim()
+									const isListItem = trimmed.startsWith('- ') || trimmed === '-'
+									const isIndented = line.startsWith('  ') && !line.startsWith('- ')
+									const className = isListItem ? 'note-list-item' : isIndented ? 'note-indented-item' : ''
+									return (
+										<div key={idx} className={className}>
+											{line || '\u00A0'}
+										</div>
+									)
+								})}
+							</div>
+							{/* Editable input layer */}
+							<textarea
+								ref={entityViewTextareaRef}
+								className="fullscreen-view__textarea fullscreen-view__textarea--input"
+								defaultValue={editingEntity.content || ''}
+								onChange={handleNoteBodyInput}
+								onKeyDown={handleNoteBodyKeyDown}
+								autoFocus
+							/>
+						</>
 					)}
 					{editingEntity.type === 'list' && (
 						<div className="list-items-view">
@@ -835,7 +1134,22 @@ function App() {
 
 			{/* Color Picker */}
 			{showColorPicker && (
-			<div ref={colorPickerRef} className={`color-picker color-picker--${pickerViewMode}`} style={pickerViewMode === 'main' ? pickerPosition : {}}>
+			<>
+				{/* Backdrop overlay to block clicks behind picker */}
+				<div
+					style={{
+						position: 'fixed',
+						top: 0,
+						left: 0,
+						right: 0,
+						bottom: 0,
+						backgroundColor: 'rgba(0, 0, 0, 0)',
+						zIndex: 2000,
+						pointerEvents: 'auto'
+					}}
+					onClick={() => setShowColorPicker(false)}
+				/>
+				<div ref={colorPickerRef} className={`color-picker color-picker--${pickerViewMode}`} style={pickerViewMode === 'main' ? pickerPosition : {}}>
 					<div className="color-picker-grid">
 						{PRESET_COLORS.map((color) => (
 							<button
@@ -854,7 +1168,41 @@ function App() {
 						))}
 					</div>
 				</div>
-			)}
+			</>
+		)}
+
+		{/* Delete Confirmation Modal */}
+		{deleteConfirmEntityId && (
+			<>
+				<div
+					className="modal-overlay"
+					onClick={() => setDeleteConfirmEntityId(null)}
+				/>
+				<div className="modal">
+					<div className="modal__content">
+						<h2 className="modal__title">Delete?</h2>
+						<p className="modal__message">This action can't be undone.</p>
+						<div className="modal__buttons">
+							<button
+								className="modal__btn modal__btn--cancel"
+								onClick={() => setDeleteConfirmEntityId(null)}
+							>
+								Cancel
+							</button>
+							<button
+								className="modal__btn modal__btn--delete"
+								onClick={() => {
+									handleDeleteEntity(deleteConfirmEntityId)
+									setDeleteConfirmEntityId(null)
+								}}
+							>
+								Delete
+							</button>
+						</div>
+					</div>
+				</div>
+			</>
+		)}
 		</div>
 	)
 }
