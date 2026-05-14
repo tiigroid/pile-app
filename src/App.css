@@ -36,12 +36,12 @@ body {
 	align-items: center;
 	justify-content: flex-end;
 	gap: 16px;
-	padding: 8px;
+	padding: 8px var(--spacing-md);
 }
 
 .app__header-btn {
-	width: 22px;
-	height: 22px;
+	width: 18px;
+	height: 18px;
 	background: transparent;
 	border: none;
 	cursor: pointer;
